@@ -1,5 +1,6 @@
 import random
 print("welcome to 2048!")
+print("developed by: @leokng-png")
 def print_board(board):
     print("_" * 21)
     for row in board:
