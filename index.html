@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title>Fusion</title>
+<style>
+  :root {
+    --fond: #14181f; --panneau: #1e2530; --creux: #2a3340;
+    --texte: #e8edf2; --doux: #8b98a8; --accent: #5fd0b5;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0; background: var(--fond); color: var(--texte);
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    display: flex; justify-content: center; align-items: flex-start;
+    overscroll-behavior: none; -webkit-tap-highlight-color: transparent;
+  }
+  main { width: min(94vw, 460px); padding: 20px 0 28px; }
+  header { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+  h1 { margin: 0; font-size: 34px; letter-spacing: 6px; font-weight: 800; color: var(--accent); }
+  .compteurs { display: flex; gap: 8px; }
+  .compteur {
+    background: var(--panneau); border-radius: 12px; padding: 6px 14px;
+    text-align: center; min-width: 72px;
+  }
+  .compteur small { display: block; color: var(--doux); font-size: 11px; text-transform: uppercase; letter-spacing: 1px; }
+  .compteur b { font-size: 19px; }
+  .barre { display: flex; justify-content: space-between; align-items: center; margin: 14px 0; gap: 8px; }
+  .barre p { margin: 0; color: var(--doux); font-size: 14px; }
+  .boutons { display: flex; gap: 8px; }
+  button {
+    font: inherit; font-weight: 600; font-size: 14px; color: var(--fond);
+    background: var(--accent); border: 0; border-radius: 10px;
+    padding: 9px 13px; cursor: pointer;
+  }
+  button.second { background: var(--creux); color: var(--texte); }
+  button:disabled { opacity: .4; cursor: default; }
+  select {
+    font: inherit; font-size: 14px; color: var(--texte); background: var(--creux);
+    border: 0; border-radius: 10px; padding: 9px 8px;
+  }
+  #plateau {
+    position: relative; width: 100%; aspect-ratio: 1; background: var(--panneau);
+    border-radius: 22px; padding: 8px; touch-action: none; user-select: none;
+  }
+  #zone { position: relative; width: 100%; height: 100%; }
+  .case, .pierre { position: absolute; top: 0; left: 0; padding: 5px; }
+  .case > div { width: 100%; height: 100%; border-radius: 50%; background: var(--creux); opacity: .55; }
+  .pierre { transition: transform .12s ease-out; z-index: 1; }
+  .pierre > div {
+    width: 100%; height: 100%; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 800; box-shadow: inset 0 -5px 0 rgba(0,0,0,.18), inset 0 3px 0 rgba(255,255,255,.18);
+  }
+  .pierre.neuve > div { animation: naitre .18s ease-out; }
+  .pierre.fusion { z-index: 2; }
+  .pierre.fusion > div { animation: gonfler .2s ease-out; }
+  @keyframes naitre { from { transform: scale(0); } to { transform: scale(1); } }
+  @keyframes gonfler { 0% { transform: scale(.6); } 60% { transform: scale(1.15); } 100% { transform: scale(1); } }
+  #voile {
+    position: absolute; inset: 0; z-index: 5; border-radius: 22px;
+    background: rgba(20,24,31,.86); display: none;
+    flex-direction: column; align-items: center; justify-content: center; gap: 14px; text-align: center;
+  }
+  #voile.visible { display: flex; }
+  #voile h2 { margin: 0; font-size: 28px; }
+  #voile p { margin: 0; color: var(--doux); }
+  footer { margin-top: 14px; color: var(--doux); font-size: 13px; line-height: 1.5; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>FUSION</h1>
+    <div class="compteurs">
+      <div class="compteur"><small>Score</small><b id="score">0</b></div>
+      <div class="compteur"><small>Record</small><b id="record">0</b></div>
+    </div>
+  </header>
+  <div class="barre">
+    <p id="objectif"></p>
+    <div class="boutons">
+      <select id="taille" aria-label="Taille de la grille">
+        <option value="3">3×3</option><option value="4" selected>4×4</option>
+        <option value="5">5×5</option><option value="6">6×6</option>
+      </select>
+      <button id="joker" class="second">Joker</button>
+      <button id="nouvelle">Nouvelle</button>
+    </div>
+  </div>
+  <div id="plateau">
+    <div id="zone"></div>
+    <div id="voile">
+      <h2 id="voile-titre"></h2>
+      <p id="voile-texte"></p>
+      <div class="boutons" id="voile-boutons"></div>
+    </div>
+  </div>
+  <footer>
+    Glisse avec les flèches du clavier ou le doigt. Deux pierres de même niveau
+    fusionnent en une pierre du niveau suivant. 3 jokers par partie pour annuler un coup.
+  </footer>
+</main>
+<script>
+"use strict";
+const OBJECTIFS = { 3: 7, 4: 10, 5: 12, 6: 14 };
+const JOKERS = 3;
+const DUREE = 120;
+
+const $ = id => document.getElementById(id);
+const zone = $("zone");
+
+let n, objectif, grille, score, jokers, precedent, gagne, voileFerme, prochainId = 1;
+const elements = new Map();
+
+function lireRecord() {
+  try { return Number(localStorage.getItem("fusion-record-" + n)) || 0; } catch (e) { return 0; }
+}
+function ecrireRecord(v) {
+  try { localStorage.setItem("fusion-record-" + n, v); } catch (e) {}
+}
+
+function couleur(niveau) {
+  const teinte = (200 + (niveau - 1) * 37) % 360;
+  const clair = 38 + ((niveau - 1) % 4) * 7;
+  return `hsl(${teinte} 55% ${clair}%)`;
+}
+
+function nouvellePartie() {
+  n = Number($("taille").value);
+  objectif = OBJECTIFS[n];
+  grille = Array.from({ length: n }, () => Array(n).fill(null));
+  score = 0; jokers = JOKERS; precedent = null; gagne = false; voileFerme = false;
+  zone.innerHTML = ""; elements.clear();
+  for (let r = 0; r < n; r++) for (let c = 0; c < n; c++) {
+    const el = document.createElement("div");
+    el.className = "case"; el.innerHTML = "<div></div>";
+    placer(el, r, c); zone.appendChild(el);
+  }
+  ajouterPierre(); ajouterPierre();
+  $("voile").classList.remove("visible");
+  afficher();
+}
+
+function placer(el, r, c) {
+  el.style.width = el.style.height = 100 / n + "%";
+  el.style.transform = `translate(${c * 100}%, ${r * 100}%)`;
+}
+
+function ajouterPierre() {
+  const vides = [];
+  for (let r = 0; r < n; r++) for (let c = 0; c < n; c++) if (!grille[r][c]) vides.push([r, c]);
+  if (!vides.length) return;
+  const [r, c] = vides[Math.floor(Math.random() * vides.length)];
+  grille[r][c] = { id: prochainId++, niveau: Math.random() < 0.85 ? 1 : 2, neuve: true };
+}
+
+function creerElement(p, r, c, classe) {
+  const el = document.createElement("div");
+  el.className = "pierre " + (classe || "");
+  const rond = document.createElement("div");
+  rond.textContent = p.niveau;
+  rond.style.background = couleur(p.niveau);
+  rond.style.fontSize = `clamp(14px, ${22 / n}vw + 8px, ${128 / n}px)`;
+  el.appendChild(rond);
+  placer(el, r, c);
+  zone.appendChild(el);
+  elements.set(p.id, el);
+}
+
+function afficher() {
+  const vivants = new Set();
+  for (let r = 0; r < n; r++) for (let c = 0; c < n; c++) {
+    const p = grille[r][c];
+    if (!p) continue;
+    vivants.add(p.id);
+    if (p.issueDe) {
+      // les deux pierres d'origine glissent jusqu'ici puis disparaissent
+      for (const id of p.issueDe) {
+        const vieux = elements.get(id);
+        if (vieux) { placer(vieux, r, c); elements.delete(id); setTimeout(() => vieux.remove(), DUREE); }
+      }
+      const pr = r, pc = c;
+      setTimeout(() => { if (grille[pr] && grille[pr][pc] === p && !elements.has(p.id)) creerElement(p, pr, pc, "fusion"); }, DUREE);
+      p.issueDe = null;
+    } else if (elements.has(p.id)) {
+      placer(elements.get(p.id), r, c);
+    } else if (p.neuve) {
+      const pr = r, pc = c;
+      setTimeout(() => { if (grille[pr] && grille[pr][pc] === p && !elements.has(p.id)) creerElement(p, pr, pc, "neuve"); }, DUREE);
+    } else {
+      creerElement(p, r, c);
+    }
+    p.neuve = false;
+  }
+  for (const [id, el] of elements) if (!vivants.has(id)) { el.remove(); elements.delete(id); }
+
+  const record = Math.max(lireRecord(), score);
+  if (record > lireRecord()) ecrireRecord(record);
+  $("score").textContent = score;
+  $("record").textContent = record;
+  $("objectif").textContent = `Objectif : niveau ${objectif}`;
+  $("joker").textContent = `Joker (${jokers})`;
+  $("joker").disabled = !precedent || jokers === 0;
+}
+
+// Coordonnées d'une rangée, en partant du bord vers lequel on glisse.
+function rangee(dir, k) {
+  const cases = [];
+  for (let i = 0; i < n; i++) {
+    if (dir === "gauche") cases.push([k, i]);
+    else if (dir === "droite") cases.push([k, n - 1 - i]);
+    else if (dir === "haut") cases.push([i, k]);
+    else cases.push([n - 1 - i, k]);
+  }
+  return cases;
+}
+
+function glisser(dir, simulation) {
+  const nouvelle = Array.from({ length: n }, () => Array(n).fill(null));
+  let change = false, gain = 0;
+  for (let k = 0; k < n; k++) {
+    const cases = rangee(dir, k);
+    const pierres = cases.map(([r, c]) => grille[r][c]).filter(Boolean);
+    let cible = 0;
+    for (let i = 0; i < pierres.length; i++) {
+      let p = pierres[i];
+      if (i + 1 < pierres.length && pierres[i + 1].niveau === p.niveau) {
+        p = { id: prochainId++, niveau: p.niveau + 1, issueDe: [p.id, pierres[i + 1].id] };
+        gain += p.niveau * 10;
+        i++;
+      }
+      const [r, c] = cases[cible++];
+      nouvelle[r][c] = p;
+      if (grille[r][c] !== p) change = true;
+    }
+  }
+  if (simulation || !change) return change;
+  precedent = { niveaux: grille.map(l => l.map(p => p ? p.niveau : 0)), score, gagne };
+  grille = nouvelle; score += gain;
+  return true;
+}
+
+function bloque() {
+  return !["gauche", "droite", "haut", "bas"].some(d => glisser(d, true));
+}
+
+function jouer(dir) {
+  if ($("voile").classList.contains("visible")) return;
+  if (!glisser(dir)) return;
+  ajouterPierre();
+  const max = Math.max(...grille.flat().map(p => p ? p.niveau : 0));
+  afficher();
+  if (max >= objectif && !gagne) {
+    gagne = true;
+    voile("Objectif atteint !", `Pierre de niveau ${objectif} en ${score} points.`,
+          [["Continuer", fermerVoile], ["Nouvelle partie", nouvellePartie]]);
+  } else if (bloque()) {
+    const actions = [["Nouvelle partie", nouvellePartie]];
+    if (jokers > 0) actions.unshift([`Joker (${jokers})`, utiliserJoker]);
+    voile("Plus aucun coup", `Score final : ${score}`, actions);
+  }
+}
+
+function utiliserJoker() {
+  if (!precedent || jokers === 0) return;
+  grille = precedent.niveaux.map(l => l.map(v => v ? { id: prochainId++, niveau: v } : null));
+  score = precedent.score; gagne = precedent.gagne;
+  precedent = null; jokers--;
+  fermerVoile();
+  afficher();
+}
+
+function voile(titre, texte, actions) {
+  $("voile-titre").textContent = titre;
+  $("voile-texte").textContent = texte;
+  const zoneBoutons = $("voile-boutons");
+  zoneBoutons.innerHTML = "";
+  actions.forEach(([nom, action], i) => {
+    const b = document.createElement("button");
+    b.textContent = nom;
+    if (i > 0) b.className = "second";
+    b.onclick = action;
+    zoneBoutons.appendChild(b);
+  });
+  setTimeout(() => $("voile").classList.add("visible"), DUREE * 3);
+}
+function fermerVoile() { $("voile").classList.remove("visible"); }
+
+const TOUCHES = {
+  ArrowLeft: "gauche", ArrowRight: "droite", ArrowUp: "haut", ArrowDown: "bas",
+  q: "gauche", d: "droite", z: "haut", s: "bas",
+};
+document.addEventListener("keydown", e => {
+  if (e.ctrlKey || e.metaKey || e.altKey) return;
+  const dir = TOUCHES[e.key.length === 1 ? e.key.toLowerCase() : e.key];
+  if (dir) { e.preventDefault(); jouer(dir); }
+  else if (e.key.toLowerCase() === "u") utiliserJoker();
+});
+
+let depart = null;
+const plateau = $("plateau");
+plateau.addEventListener("pointerdown", e => { depart = [e.clientX, e.clientY]; });
+plateau.addEventListener("pointerup", e => {
+  if (!depart) return;
+  const dx = e.clientX - depart[0], dy = e.clientY - depart[1];
+  depart = null;
+  if (Math.max(Math.abs(dx), Math.abs(dy)) < 24) return;
+  jouer(Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? "droite" : "gauche") : (dy > 0 ? "bas" : "haut"));
+});
+plateau.addEventListener("pointercancel", () => { depart = null; });
+
+$("nouvelle").onclick = nouvellePartie;
+$("joker").onclick = utiliserJoker;
+$("taille").onchange = () => { $("taille").blur(); nouvellePartie(); };
+nouvellePartie();
+</script>
+</body>
+</html>
